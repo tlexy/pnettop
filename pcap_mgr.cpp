@@ -112,7 +112,7 @@ pcap_mgr::pcap_mgr(const std::string& filter)
     }
     if (pcap_setfilter(_p, &_fp) == -1)
     {
-        fprintf(stderr, "Couldn't install filter %s: %s\n", _filter_exp, pcap_geterr(_p));
+        fprintf(stderr, "Couldn't install filter %s: %s\n", _filter_exp.c_str(), pcap_geterr(_p));
         return;
     }
 }
