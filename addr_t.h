@@ -11,6 +11,7 @@
 class addr_t
 {
 
+public:
 	typedef union 
 	{
 		in_addr ipv4;
@@ -34,7 +35,6 @@ class addr_t
 		return ret;
 	}
 
-public:
 	addr_t() : af_type_(0)
 	{
 		std::memset(&ip_data_, 0x00, sizeof(ip_data));
@@ -56,9 +56,9 @@ public:
 
 	addr_t(const in_addr &ipv4) : af_type_(AF_INET), ip_data_(get_ip4_data(&ipv4))
 	{
-		char mask_buf[20];
-		inet_ntop(AF_INET, (void *)&ip_data_, mask_buf, sizeof(mask_buf));
-		fprintf(stderr, "ip str:%s\n", mask_buf);
+		// char mask_buf[20];
+		// inet_ntop(AF_INET, (void *)&ip_data_, mask_buf, sizeof(mask_buf));
+		// fprintf(stderr, "ip str:%s\n", mask_buf);
 	}
 
 	addr_t(const in6_addr &ipv6) : af_type_(AF_INET6), ip_data_(get_ip6_data(&ipv6))

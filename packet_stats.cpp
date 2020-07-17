@@ -4,6 +4,41 @@
 #include <list>
 #include "utils.h"
 
+
+std::string packet_stats::to_string() const
+{
+	char src_buf[20], dst_buf[20];
+	memset(src_buf, 0x0, sizeof(src_buf));
+	memset(dst_buf, 0x0, sizeof(dst_buf));
+	inet_ntop(AF_INET, (void *)&src.ip_data_, src_buf, sizeof(src_buf));
+	inet_ntop(AF_INET, (void *)&dst.ip_data_, dst_buf, sizeof(dst_buf));
+	//fprintf(stderr, "ip str:%s\n", mask_buf);
+	std::string ret_str;
+	ret_str += src_buf;
+	ret_str += std::string(":");
+	ret_str += std::to_string(p_src);
+
+	ret_str += std::string("  --------  ");
+	ret_str += dst_buf;
+	ret_str += std::string(":");
+	ret_str += std::to_string(p_dst);
+
+	ret_str += std::string("  len: ");
+	ret_str += std::to_string(len);
+	ret_str += std::string("   type:");
+	if (t == PACKET_TCP)
+	{
+		ret_str += std::string(" TCP");
+	}
+	else 
+	{
+		ret_str += std::string(" UDP");
+	}
+	return ret_str;
+}
+
+///////////////////////////////////////////////////////////////////
+
 local_addr_mgr::local_addr_mgr() 
 {
 	struct ifaddrs	*ifaddr = 0, *ifa = 0;
@@ -37,4 +72,3 @@ bool local_addr_mgr::is_local(const addr_t& in) const
 {
 	return local_addrs_.find(in) != local_addrs_.end();
 }
-

@@ -9,6 +9,8 @@
 #include "utils.h"
 #include <fstream>
 
+static local_addr_mgr local_mgr;
+
 /* Parses /proc/<pid>/cmdline */
 std::string get_cmd_line(const pid_t pid)
 {
@@ -124,8 +126,10 @@ void get_sockets_raw(const bool tcp, sd_inodes &out)
             continue;
         }
         // get the address
+        //fprintf(stderr, "get local addr...\n");
         const addr_t lcl_addr = get_addr_hexstr(local_addr);
-        const ext_sd_t esd(lcl_addr, local_port, tcp ? packet_stats::type::PACKET_TCP : packet_stats::type::PACKET_UDP);
+        const addr_t r_addr = get_addr_hexstr(rem_addr);
+        const ext_sd_t esd(lcl_addr, local_port, r_addr, rem_port, tcp ? packet_stats::type::PACKET_TCP : packet_stats::type::PACKET_UDP, inode);
         out[esd].push_back(inode);
         lcl_ports.insert(local_port);
     }
@@ -138,15 +142,31 @@ void get_all_sockets(sd_inodes &out)
     get_sockets_raw(false, out);
     // now we need to sort all vectors of inodes
     for (auto &i : out)
-        std::sort(i.second.begin(), i.second.end());
+    {
+       std::sort(i.second.begin(), i.second.end());
+    }
+
+    // std::ofstream of("system_record.log", std::ostream::out | std::ostream::binary);
+	// if (!of.is_open())
+	// {
+	// 	return;
+	// }
+    // for (auto &i : out)
+    // {
+    //     of << i.first.to_string() << std::endl;
+    // }
+    // of.close();
 }
 
 process_stat::process_stat(pid_t pid)
     :_pid(pid),
     _r_len(0),
-    _t_len(0)
+    _t_len(0),
+    _ru_len(0),
+    _tu_len(0)
 {
     get_sockets_inodes(pid, _vnodes);
+    //fprintf(stderr, "inodes size:%u\n", _vnodes.size());
     _cmd_str = get_cmd_line(pid);
 }
 
@@ -160,23 +180,41 @@ pid_t process_stat::pid() const
     return _pid;
 }
 
-void process_stat::add_recv_len(size_t len)
+void process_stat::add_recv_tcp_len(size_t len)
 {
     _r_len += len;
 }
 
-void process_stat::add_trans_len(size_t len)
+void process_stat::add_trans_tcp_len(size_t len)
 {
     _t_len += len;
 }
 
-size_t process_stat::recv_len() const
+void process_stat::add_recv_udp_len(size_t len)
 {
+    _ru_len += len;
+}
+
+void process_stat::add_trans_udp_len(size_t len)
+{
+    _tu_len += len;
+}
+
+size_t process_stat::recv_len(bool tcp) const
+{
+    if (!tcp)
+    {
+        return _ru_len;
+    }
     return _r_len;
 }
 
-size_t process_stat::trans_len() const
+size_t process_stat::trans_len(bool tcp) const
 {
+    if (!tcp)
+    {
+        return _tu_len;
+    }
     return _t_len;
 }
 
@@ -192,6 +230,26 @@ proc_mgr::proc_mgr(const std::vector<pid_t> pids)
     }
 }
 
+bool match(const std::map<ext_sd_t, unsigned long>& pid_socks, const packet_stats& packet)
+{
+    std::map<ext_sd_t, unsigned long>::const_iterator it = pid_socks.begin();
+    for (; it != pid_socks.end(); ++it)
+    {
+        if (it->first.t != packet.t)
+        {
+            continue;
+        }
+        if (it->first.laddr == packet.src || it->first.laddr == packet.dst)
+        {
+            return true;
+        }
+    }
+}
+
+/*
+    总的来说，将一个packet_stats转换为struct ext_sd，判断两者是否相等（或者通过转换为inode来判断？）
+    再根据packet_stats中的laddr和raddr来判断发送或者接收
+*/
 void proc_mgr::get_stat(const std::list<packet_stats>& list, std::vector<process_stat>& pros)
 {
     //系统中所有的sockets...
@@ -207,29 +265,58 @@ void proc_mgr::get_stat(const std::list<packet_stats>& list, std::vector<process
     for (int i = 0; i < _pros.size(); ++i)
     {
         v_inodes inodes;
+        //获得当前进程的所有inode号
         _pros[i].get_inodes(inodes);
-        sd_inodes proc_sd;//当前进程用到的地址（local addr and local port）集合
+        std::map<ext_sd_t, unsigned long> proc_sd;//当前进程用到的地址集合
         for (int j = 0; j < inodes.size(); ++j)
         {
-            if (link_inodes.find(inodes[j]) != link_inodes.end())
+            std::map<unsigned long, sd_inodes::const_iterator>::iterator sit = link_inodes.find(inodes[j]);
+            if (sit != link_inodes.end())
             {
-                proc_sd[link_inodes[inodes[j]]->first] = link_inodes[inodes[j]]->second;
+                proc_sd[sit->second->first] = sit->first;
             }
         }
         //对于每个进程
         std::list<packet_stats>::const_iterator it = list.begin();
+        fprintf(stderr, "list size:%u, proc_sd size:%d\n", list.size(), proc_sd.size());
         for (; it != list.end(); ++it)
         {
-            ext_sd_t sd_src(it->src, it->p_src, it->t);
-            ext_sd_t sd_dst(it->dst, it->p_dst, it->t);
-            if (proc_sd.find(sd_src) != proc_sd.end())
+            // ext_sd_t sd(it->src, it->p_src, it->dst, it->p_dst, it->t);
+            // if (proc_sd.find(sd) == proc_sd.end())
+            // {
+            //     continue;
+            // }
+            if (!match(proc_sd, *it))
             {
-                _pros[i].add_trans_len(it->len);
+                continue;
             }
-            else if (proc_sd.find(sd_dst) != proc_sd.end())
+            bool is_send = local_mgr.is_local(it->src);
+            bool is_recv = local_mgr.is_local(it->dst);
+            if (is_send && it->t == packet_stats::PACKET_TCP)
             {
-                _pros[i].add_recv_len(it->len);
+                _pros[i].add_trans_tcp_len(it->len);
             }
+            else if (is_send && it->t == packet_stats::PACKET_UDP)
+            {
+                 _pros[i].add_trans_udp_len(it->len);
+            }
+            else if (is_recv && it->t == packet_stats::PACKET_TCP)
+            {
+                 _pros[i].add_recv_udp_len(it->len);
+            }
+            else if (is_recv && it->t == packet_stats::PACKET_UDP)
+            {
+                 _pros[i].add_recv_udp_len(it->len);
+            }
+            // ext_sd_t sd_dst(it->dst, it->p_dst, it->t);
+            // if (proc_sd.find(sd_src) != proc_sd.end())
+            // {
+            //     _pros[i].add_trans_len(it->len);
+            // }
+            // else if (proc_sd.find(sd_dst) != proc_sd.end())
+            // {
+            //     _pros[i].add_recv_len(it->len);
+            // }
         }
     }
     pros = _pros;

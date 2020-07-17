@@ -3,6 +3,10 @@
 
 #include "addr_t.h"
 #include <set>
+#include <string>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <cstring>
 
 class packet_stats
 {
@@ -30,6 +34,8 @@ public:
 	packet_stats(const packet_stats &rhs) : src(rhs.src), dst(rhs.dst), p_src(rhs.p_src), p_dst(rhs.p_dst), len(rhs.len), t(rhs.t), ts(rhs.ts)
 	{
 	}
+
+	std::string to_string() const;
 };
 
 class local_addr_mgr
